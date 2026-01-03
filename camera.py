@@ -25,15 +25,17 @@ class Camera:
         self.phi = 0
 
         # Camera control parameters
-        self.fov = np.radians(60)
+        self.fov = np.radians(50)
         self.mouse_sensitivity = 0.005
         self.dragging = False
+        self._dirty = True
 
 
     # Handle mouse events for camera control
     def handle_event(self, event):
 
         """ 
+
         Handle mouse events to control camera orientation
 
         Inputs: event (pygame event)
@@ -58,6 +60,7 @@ class Camera:
             self.theta += dx * self.mouse_sensitivity
             self.phi -= dy * self.mouse_sensitivity
             self.phi = max(-np.pi/2, min(np.pi/2, self.phi))
+            self._dirty = True
 
 
     # Update the camera position based on time delta
@@ -140,83 +143,61 @@ class Camera:
         # Return basis vectors
         return forward, right, up
 
+    
+    # Get ray direction through pixel
+    def ray_direction(self, px, py, img_w, img_h):
 
-    # Project a 3D point to 2D screen coordinates
-    def project(self, point, screen_width, screen_height):
+        """
+        
+        Compute the ray direction from the camera through pixel (px, py)
+
+        Inputs: px (int), py (int), img_w (int), img_h (int)
+
+        Outputs: numpy array of ray direction [dx, dy, dz]
 
         """
 
-        Project a 3D point to 2D screen coordinates
-
-        Inputs: point (numpy array [x, y, z]), screen_width (int), screen_height (int)
-
-        Outputs: (screen_x, screen_y) tuple or None if behind camera
-
-        """
-
-        # Get camera position and basis vectors
-        cam_pos = self.position()
+        # Get camera basis vectors
         forward, right, up = self.basis_vectors()
 
-        # Transform point to camera space
-        rel = point - cam_pos
-        x_cam = np.dot(rel, right)
-        y_cam = np.dot(rel, up)
-        z_cam = np.dot(rel, forward)
+        # Convert pixel coord to Normalized Device Coordinates (NDC) in [-1, 1]
+        # Note: +0.5 aims at the pixel center
+        x_ndc = ( (px + 0.5) / img_w ) * 2.0 - 1.0
+        y_ndc = 1.0 - ( (py + 0.5) / img_h ) * 2.0
 
-        # If the point is behind the camera, return None
-        if z_cam <= 0:
-            return None
+        # Account for aspect ratio
+        aspect = img_w / img_h
 
-        # Perspective projection
-        scale = 1 / np.tan(self.fov / 2)
-        x_ndc = (x_cam / z_cam) * scale
-        y_ndc = (y_cam / z_cam) * scale
+        # Convert NDC to a direction in camera space using FOV
+        tan_half_fov = np.tan(self.fov / 2.0)
+        x_cam = x_ndc * aspect * tan_half_fov
+        y_cam = y_ndc * tan_half_fov
+        z_cam = 1.0
 
-        # Convert to screen coordinates
-        screen_x = int((x_ndc + 1) * 0.5 * screen_width)
-        screen_y = int((1 - y_ndc) * 0.5 * screen_height)
+        # Convert camera-space direction to world-space direction
+        dir_world = (x_cam * right) + (y_cam * up) + (z_cam * forward)
+        dir_world /= np.linalg.norm(dir_world)
+        return dir_world
 
-        # Return screen coordinates
-        return screen_x, screen_y
 
-    
-    # Draw disk
-    def draw_disk(self, screen, width, height):
+    # Check and consume dirty flag
+    def consume_dirty(self):
 
         """
 
-        Draw a simple accretion disk ring in the x–z plane.
+        Check if the camera state was dirty and reset the flag
 
-        Inputs: screen (pygame surface), width (int), height (int)
+        Inputs: none
 
-        Outputs: none
+        Outputs: was_dirty (bool)
 
         """
 
-        # Disk parameters
-        r_inner = 1.5
-        r_outer = 3.0
-        num_points = 200
+        # Check if the camera state was dirty
+        was_dirty = self._dirty
 
-        # Draw inner and outer rings
-        for r in [r_inner, r_outer]:
+        # Reset dirty flag
+        self._dirty = False
 
-            # Generate points around the circle
-            points = []
-
-            # Compute points on the circle with even spacing
-            for i in range(num_points):
-                angle = 2 * np.pi * i / num_points
-                x = r * np.cos(angle)
-                y = 0.0
-                z = r * np.sin(angle)
-
-                # Project points to screen
-                p = self.project(np.array([x, y, z]), width, height)
-                if p is not None:
-                    points.append(p)
-
-            # Draw the ring if enough points are visible
-            if len(points) > 2:
-                pygame.draw.lines(screen, (200, 120, 50), True, points, 2)
+        # Return whether it was dirty
+        return was_dirty
